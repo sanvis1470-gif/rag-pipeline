@@ -25,7 +25,10 @@ python -m rag reindex --strategy semantic      # re-chunk stored docs, no re-upl
 python -m rag reindex --reparse                # also re-run loaders on stored raw files
 python -m rag search "how does X work" -k 5    # dense vs BM25 side by side
 python -m rag stats
-python -m rag verify                           # Chroma ids == BM25 ids ?
+python -m rag verify  
+python -m rag compare                          # run eval_questions.json against all 3 chunking strategies
+
+                         # Chroma ids == BM25 ids ?
 ```
 Or from Python: `Pipeline(Config(strategy="semantic")).ingest_file("a.pdf")`.
 
