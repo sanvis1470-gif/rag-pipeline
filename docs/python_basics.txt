@@ -1,0 +1,21 @@
+Python Basics: A Short Study Guide
+
+Python is a high-level programming language known for its readable syntax. It is used for web development, automation, data analysis and machine learning. Because it is interpreted, you can run a line of code immediately and see the result, which makes it a good first language.
+
+Variables and types
+A variable is a name that refers to a value. You create one simply by assigning to it, for example age = 20 or name = "Sanvi". Python figures out the type automatically. The most common built-in types are integers, floating point numbers, strings, booleans, lists, tuples, dictionaries and sets. A list is an ordered, changeable collection, while a tuple is ordered but cannot be changed after creation. A dictionary stores key and value pairs and is the right choice when you need fast lookup by name.
+
+Control flow
+Programs make decisions with if, elif and else. Repetition is done with for loops, which iterate over any sequence, and while loops, which repeat until a condition becomes false. Indentation is not optional in Python: the indented block under a statement defines what belongs to it. A common beginner mistake is mixing tabs and spaces, which causes an IndentationError.
+
+Functions
+A function is a reusable block of code defined with the def keyword. Functions can take parameters, return values and have default arguments. Writing small functions that do one thing makes programs easier to test and debug. A function without an explicit return statement returns None.
+
+Working with files
+The recommended way to read a file is with a with statement, because it closes the file automatically even if an error occurs. You open a file in read mode to get its contents, in write mode to replace them, and in append mode to add to the end. Text files should be opened with an explicit encoding, usually utf-8, to avoid surprises between operating systems.
+
+Modules and packages
+A module is simply a Python file whose functions and classes you can import into another file. A package is a folder of modules. The standard library ships with many useful modules, such as os for the operating system, json for data exchange and re for regular expressions. Third-party packages are installed with pip, and it is good practice to keep each project's packages inside a virtual environment so versions do not clash.
+
+Handling errors
+When something goes wrong Python raises an exception. You can catch it with try and except blocks and decide how the program should react. Catch specific exceptions such as ValueError or FileNotFoundError rather than a bare except, so that real bugs are not hidden.

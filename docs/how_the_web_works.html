@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>How the Web Works</title>
+  <style>body { font-family: sans-serif; }</style>
+  <script>console.log("tracking script that should be ignored");</script>
+</head>
+<body>
+  <nav><a href="/">Home</a> | <a href="/about">About</a> | <a href="/contact">Contact</a></nav>
+
+  <h1>How the Web Works</h1>
+  <p>When you type an address into your browser and press enter, a surprising number of steps happen in a fraction of a second. This page walks through the main ones, from the domain name to the page appearing on your screen.</p>
+
+  <h2>DNS: finding the server</h2>
+  <p>Computers locate each other using numeric IP addresses, but people prefer names such as example.com. The Domain Name System, or DNS, is the global directory that translates a name into an IP address. Your browser first checks its own cache, then asks a DNS resolver, which may query several other servers before returning an answer.</p>
+
+  <h2>HTTP: asking for the page</h2>
+  <p>Once the browser knows the server's address, it opens a connection and sends an HTTP request. The request contains a method, usually GET to fetch a page or POST to submit a form, plus headers describing the browser and the content it accepts.</p>
+  <p>The server replies with a status code and the content. Some codes worth remembering:</p>
+  <ul>
+    <li>200 means the request succeeded.</li>
+    <li>301 means the page has moved permanently to a new address.</li>
+    <li>404 means the server could not find the requested page.</li>
+    <li>500 means something went wrong on the server itself.</li>
+  </ul>
+
+  <h2>HTTPS and encryption</h2>
+  <p>Plain HTTP sends everything as readable text, so anyone on the network could read or change it. HTTPS wraps HTTP inside TLS encryption. During a short handshake the browser verifies the server's certificate and both sides agree on keys, after which all traffic is encrypted. The padlock icon in the address bar indicates that this succeeded.</p>
+
+  <h2>Rendering the page</h2>
+  <p>The browser receives HTML and builds a tree called the DOM. It then downloads linked stylesheets, scripts and images, applies the CSS rules to work out layout and appearance, and paints the result on screen. JavaScript can change the DOM afterwards, which is how pages update without reloading.</p>
+
+  <footer>Copyright 2026 Example Site. All rights reserved.</footer>
+</body>
+</html>
