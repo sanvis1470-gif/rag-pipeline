@@ -1,0 +1,12 @@
+[
+  {"question": "what does a 404 status code mean", "answer_contains": "404 means the server could not find the requested page"},
+  {"question": "how does HTTPS keep traffic encrypted", "answer_contains": "HTTPS wraps HTTP inside TLS encryption"},
+  {"question": "what happens during a DNS lookup", "answer_contains": "translates a name into an IP address"},
+  {"question": "what is a B-tree index", "answer_contains": "Most relational databases use a B-tree index by default"},
+  {"question": "what are the ACID properties of a transaction", "answer_contains": "Atomicity means all or nothing"},
+  {"question": "what is normalization in databases", "answer_contains": "Normalization is the process of organizing tables"},
+  {"question": "what is the difference between a list and a tuple", "answer_contains": "a tuple is ordered but cannot be changed"},
+  {"question": "how should I open files in python", "answer_contains": "closes the file automatically"},
+  {"question": "where can i learn system design for free", "answer_contains": "Gaurav Sen"},
+  {"question": "free in-browser SQL practice", "answer_contains": "SQLBolt"}
+]
