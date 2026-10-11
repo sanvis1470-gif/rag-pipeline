@@ -1,0 +1,16 @@
+[
+  {"type": "keyword",  "question": "IndentationError", "answer_contains": "mixing tabs and spaces, which causes an IndentationError"},
+  {"type": "keyword",  "question": "idx_students_email", "answer_contains": "CREATE INDEX idx_students_email"},
+  {"type": "keyword",  "question": "MVCC", "answer_contains": "multi-version concurrency control (MVCC)"},
+  {"type": "keyword",  "question": "FileNotFoundError", "answer_contains": "such as ValueError or FileNotFoundError"},
+  {"type": "keyword",  "question": "status 301", "answer_contains": "301 means the page has moved permanently"},
+  {"type": "keyword",  "question": "LangGraph", "answer_contains": "LangGraph Course (LangChain Academy)"},
+  {"type": "semantic", "question": "why shouldn't money vanish halfway through moving it between bank accounts", "answer_contains": "must happen together, otherwise money would disappear or be created"},
+  {"type": "semantic", "question": "how do browsers turn a website name into a number", "answer_contains": "translates a name into an IP address"},
+  {"type": "semantic", "question": "how can I avoid storing the same department name many times", "answer_contains": "you store a department id and keep the name in a separate departments table"},
+  {"type": "semantic", "question": "what makes the browser show a lock symbol", "answer_contains": "The padlock icon in the address bar indicates that this succeeded"},
+  {"type": "semantic", "question": "how do I make sure a file gets closed even when something fails", "answer_contains": "closes the file automatically even if an error occurs"},
+  {"type": "mixed",    "question": "which free playlist teaches computer networks from scratch", "answer_contains": "Computer Networks playlist"},
+  {"type": "mixed",    "question": "is there a list of companies that hire freshers off campus", "answer_contains": "Off-Campus Hiring Companies List"},
+  {"type": "mixed",    "question": "what does ACID mean for transactions", "answer_contains": "Atomicity means all or nothing"}
+]
