@@ -193,3 +193,77 @@ def test_compare_runs_all_strategies(pipe, tmp_path):
     assert res["recursive"]["rows"][0]["bm25"] == 1
     report = format_report(res, qs, 5)
     assert "hit@1" in report and "recursive" in report
+
+
+# ------------------------------------------------------------------ phase 2: retrieval
+def _hit(i, text="t"):
+    return {"id": f"c{i}", "text": text, "source": "s.md", "heading": "h", "page": -1, "chunk_index": i, "strategy": "recursive"}
+
+
+def test_rrf_rewards_agreement_and_respects_weights():
+    from rag.retrieval import reciprocal_rank_fusion
+    dense = [dict(_hit(1), score=0.9), dict(_hit(2), score=0.8), dict(_hit(3), score=0.7)]
+    sparse = [dict(_hit(3), score=9.0), dict(_hit(4), score=5.0)]
+    fused = reciprocal_rank_fusion(dense, sparse, 0.5, 0.5, k=60)
+    assert fused[0].id == "c3"                                  # found by both lists -> wins
+    c3 = fused[0]
+    assert (c3.dense_rank, c3.sparse_rank) == (3, 1)
+    assert abs(c3.rrf_score - (0.5 / 63 + 0.5 / 61)) < 1e-12
+    dense_heavy = reciprocal_rank_fusion(dense, sparse, 0.99, 0.01)   # dense #1 now beats the "both lists" chunk
+    sparse_heavy = reciprocal_rank_fusion(dense, sparse, 0.01, 0.99)
+    assert dense_heavy[0].id == "c1" and sparse_heavy[0].id == "c3"
+    a = reciprocal_rank_fusion(dense, sparse, 0.7, 0.3)
+    b = reciprocal_rank_fusion(dense, sparse, 7, 3)             # only the ratio matters
+    assert [(c.id, round(c.rrf_score, 12)) for c in a] == [(c.id, round(c.rrf_score, 12)) for c in b]
+
+
+def test_rrf_rejects_bad_weights():
+    from rag.retrieval import reciprocal_rank_fusion
+    with pytest.raises(ValueError):
+        reciprocal_rank_fusion([], [], 0, 0)
+    with pytest.raises(ValueError):
+        Config(dense_weight=-1)
+
+
+@pytest.fixture
+def retr(pipe, tmp_path):
+    from rag.rerankers import LexicalOverlapReranker
+    pipe.ingest_file(write(tmp_path, "a.md", MD + "\n```sql\nCREATE INDEX idx_students_email ON students (email);\n```\n"), "recursive")
+    pipe.retriever._reranker = LexicalOverlapReranker()
+    return pipe.retriever
+
+
+def test_sparse_finds_exact_identifier(retr):
+    res = retr.retrieve("idx_students_email", mode="sparse", rerank=False)
+    assert res.results and "idx_students_email" in res.results[0].text
+    assert res.results[0].sparse_rank == 1 and res.results[0].dense_rank is None
+
+
+def test_hybrid_pipeline_sizes_and_fields(retr):
+    res = retr.retrieve("how do cats behave", mode="hybrid", rerank=True)
+    assert 0 < len(res.results) <= 5 <= 20 and len(res.candidates) <= 20
+    assert res.reranked and all(c.rerank_score is not None for c in res.results)
+    scores = [c.rerank_score for c in res.results]
+    assert scores == sorted(scores, reverse=True)
+    no_rr = retr.retrieve("how do cats behave", mode="hybrid", rerank=False)
+    assert not no_rr.reranked and all(c.rerank_score is None for c in no_rr.results)
+    assert [c.id for c in no_rr.results] == [c.id for c in no_rr.candidates][:len(no_rr.results)]
+
+
+def test_reranker_can_reorder_candidates(retr):
+    class Reverse:
+        def score(self, query, texts):
+            return list(range(len(texts)))                      # last candidate gets the highest score
+    retr._reranker = Reverse()
+    res = retr.retrieve("database indexes transactions", mode="hybrid", rerank=True)
+    assert res.results[0].id == res.candidates[-1].id
+
+
+def test_retrieval_eval_runs(retr):
+    from rag.evaluate import format_eval, format_sweep, run_eval, sweep_weights
+    qs = [{"type": "keyword", "question": "idx_students_email", "answer_contains": "CREATE INDEX idx_students_email"},
+          {"type": "semantic", "question": "do cats purr", "answer_contains": "Cats purr when happy"}]
+    out = run_eval(retr, qs)
+    assert list(out) == ["dense", "sparse", "hybrid", "hybrid+rerank"] and out["sparse"][0] == 1
+    assert "MRR by question type" in format_eval(out, qs, 5)
+    assert "0.7 / 0.3" in format_sweep(sweep_weights(retr, qs), len(qs), 5)
