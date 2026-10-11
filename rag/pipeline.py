@@ -12,6 +12,8 @@ from .embeddings import Embedder, make_embedder
 from .indexes import ChunkIndex
 from .loaders import load_document
 from .models import Chunk, Document
+from .rerankers import Reranker
+from .retrieval import Retriever
 from .store import DocumentStore
 
 
@@ -26,13 +28,15 @@ class IngestReport:
 
 
 class Pipeline:
-    def __init__(self, cfg: Config | None = None, embedder: Embedder | None = None, auto_repair: bool = True):
+    def __init__(self, cfg: Config | None = None, embedder: Embedder | None = None, auto_repair: bool = True,
+                 reranker: Reranker | None = None):
         self.cfg = cfg or Config()
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self._check_embedding_model()
         self.embedder = embedder or make_embedder(self.cfg)
         self.store = DocumentStore(self.cfg.raw_dir, self.cfg.processed_dir)
         self.index = ChunkIndex(self.cfg.chroma_dir, self.cfg.bm25_path, self.cfg.collection_name, auto_repair)
+        self.retriever = Retriever(self.index, self.embedder, self.cfg, reranker)
 
     def _check_embedding_model(self) -> None:
         """Vectors from different models can't share an index -> refuse to mix them."""

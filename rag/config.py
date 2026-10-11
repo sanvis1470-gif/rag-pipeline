@@ -20,6 +20,16 @@ class Config:
     semantic_min_chars: int = 200
     semantic_max_chars: int = 1500
 
+    # retrieval (phase 2)
+    dense_k: int = 10                    # candidates from the vector store
+    sparse_k: int = 10                   # candidates from BM25
+    rrf_k: int = 60                      # RRF damping constant (60 is the value from the original paper)
+    dense_weight: float = 0.7            # only the ratio matters; normalized internally
+    sparse_weight: float = 0.3
+    rerank_candidates: int = 20          # fused candidates sent to the reranker
+    rerank_top_n: int = 5                # chunks kept after reranking
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
     # dedup / embedding
     dedup_threshold: float = 0.95        # cosine similarity
     embed_batch_size: int = 128
@@ -32,6 +42,8 @@ class Config:
             self.embedding_model = DEFAULT_MODELS[self.embedding_provider]
         if self.strategy not in STRATEGIES:
             raise ValueError(f"strategy must be one of {STRATEGIES}")
+        if min(self.dense_weight, self.sparse_weight) < 0 or self.dense_weight + self.sparse_weight <= 0:
+            raise ValueError("dense_weight and sparse_weight must be >= 0 and not both 0")
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap must be smaller than chunk_size")
 
