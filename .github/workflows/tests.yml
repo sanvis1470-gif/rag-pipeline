@@ -1,0 +1,19 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # The tests use an offline fake embedder, so the heavy model libraries
+      # (sentence-transformers / torch) are not needed in CI.
+      - run: pip install chromadb rank-bm25 pypdf beautifulsoup4 numpy pytest reportlab
+      - run: python -m pytest -q
