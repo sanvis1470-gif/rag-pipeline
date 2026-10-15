@@ -28,6 +28,7 @@ class Config:
     sparse_weight: float = 0.3
     rerank_candidates: int = 20          # fused candidates sent to the reranker
     rerank_top_n: int = 5                # chunks kept after reranking
+    rerank_margin: float | None = None   # if set, drop results scoring more than this below the best one
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     # dedup / embedding

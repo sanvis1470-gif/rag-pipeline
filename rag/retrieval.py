@@ -88,7 +88,8 @@ class Retriever:
 
     # -- full pipeline ---------------------------------------------------------------------
     def retrieve(self, query: str, mode: str = "hybrid", rerank: bool = True, top_n: int | None = None,
-                 dense_weight: float | None = None, sparse_weight: float | None = None) -> RetrievalResult:
+                 dense_weight: float | None = None, sparse_weight: float | None = None,
+                 score_margin: float | None = None) -> RetrievalResult:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         cfg = self.cfg
@@ -116,6 +117,9 @@ class Retriever:
             for c, s in zip(candidates, scores):
                 c.rerank_score = float(s)
             results = sorted(candidates, key=lambda c: -c.rerank_score)[:top_n]   # stable: ties keep fusion order
+            margin = cfg.rerank_margin if score_margin is None else score_margin
+            if margin is not None:      # relative cutoff: keep only results close to the best score
+                results = [c for c in results if c.rerank_score >= results[0].rerank_score - margin]
         else:
             results = candidates[:top_n]
         return RetrievalResult(query, mode, candidates, results, bool(rerank and candidates),

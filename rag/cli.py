@@ -56,6 +56,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--top-n", type=int, default=5)
     p.add_argument("--dense-weight", type=float, default=None)
     p.add_argument("--sparse-weight", type=float, default=None)
+    p.add_argument("--margin", type=float, default=None,
+                   help="drop results scoring more than this below the best reranker score (e.g. 5)")
     p.add_argument("--trace", action="store_true", help="also show every candidate before reranking")
     p.add_argument("--full", action="store_true", help="print whole chunk text")
 
@@ -63,6 +65,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--questions", default="eval_hybrid.json")
     p.add_argument("--top-n", type=int, default=5)
     p.add_argument("--sweep", action="store_true", help="also sweep the dense/sparse weight ratio")
+    p.add_argument("--margin", type=float, default=5.0, help="score margin used by the rerank+cutoff stage")
 
     p = sub.add_parser("compare", help="run eval questions against several chunking strategies")
     p.add_argument("--questions", default="eval_questions.json")
@@ -86,7 +89,10 @@ def main(argv: list[str] | None = None) -> None:
     from .pipeline import Pipeline
     if a.cmd == "verify":
         idx = Pipeline(cfg, auto_repair=False).index
-        print(f"chroma={idx.count()} bm25={len(idx.bm25.ids)} in_sync={idx.is_in_sync()}")
+        ok = idx.is_in_sync()
+        print(f"chroma={idx.count()} bm25={len(idx.bm25.ids)} in_sync={ok}")
+        if not ok:
+            print("BM25 is out of date (e.g. after a tokenizer change). Any other command, such as `stats`, rebuilds it.")
         return
     pipe = Pipeline(cfg)
 
@@ -96,7 +102,8 @@ def main(argv: list[str] | None = None) -> None:
         for r in reports:
             print(f"{r.source:40s} [{r.strategy}] chunks={r.n_chunks} inserted={r.n_inserted} dupes={r.n_duplicates}")
     elif a.cmd == "retrieve":
-        res = pipe.retriever.retrieve(a.query, mode=a.mode, rerank=not a.no_rerank, top_n=a.top_n)
+        res = pipe.retriever.retrieve(a.query, mode=a.mode, rerank=not a.no_rerank, top_n=a.top_n,
+                                      score_margin=a.margin)
         dw, sw = res.weights
         stage = a.mode + ("" if a.mode != "hybrid" else f" (RRF dense {dw:.2f} / sparse {sw:.2f})")
         print(f"\nmode: {stage}{' + cross-encoder rerank' if res.reranked else ''}"
@@ -116,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
         import json
         from .evaluate import format_eval, format_sweep, run_eval, sweep_weights
         questions = json.loads(Path(a.questions).read_text(encoding="utf-8"))
-        print(format_eval(run_eval(pipe.retriever, questions, a.top_n), questions, a.top_n))
+        print(format_eval(run_eval(pipe.retriever, questions, a.top_n, margin=a.margin), questions, a.top_n))
         if a.sweep:
             print("\n" + format_sweep(sweep_weights(pipe.retriever, questions, a.top_n), len(questions), a.top_n))
     elif a.cmd == "compare":
