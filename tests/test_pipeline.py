@@ -264,6 +264,40 @@ def test_retrieval_eval_runs(retr):
     qs = [{"type": "keyword", "question": "idx_students_email", "answer_contains": "CREATE INDEX idx_students_email"},
           {"type": "semantic", "question": "do cats purr", "answer_contains": "Cats purr when happy"}]
     out = run_eval(retr, qs)
-    assert list(out) == ["dense", "sparse", "hybrid", "hybrid+rerank"] and out["sparse"][0] == 1
+    assert list(out) == ["dense", "sparse", "hybrid", "hybrid+rerank", "rerank+cutoff"]
+    assert out["sparse"][0][0] == 1 and all(n >= 1 for rows in out.values() for _, n in rows)
     assert "MRR by question type" in format_eval(out, qs, 5)
     assert "0.7 / 0.3" in format_sweep(sweep_weights(retr, qs), len(qs), 5)
+
+
+def test_tokenizer_drops_stopwords_but_keeps_identifiers():
+    from rag.indexes import tokenize
+    assert tokenize("what does a 404 status code mean") == ["404", "status", "code", "mean"]
+    assert tokenize("idx_students_email IndentationError") == ["idx_students_email", "indentationerror"]
+    assert tokenize("what is it") == [] and tokenize("what is it", keep_stopwords=True) == ["what", "is", "it"]
+
+
+def test_query_of_only_stopwords_still_searches(retr):
+    assert retr.sparse("what is the") is not None        # falls back to unfiltered tokens, no crash
+
+
+def test_old_bm25_file_is_rebuilt_automatically(pipe, tmp_path):
+    pipe.ingest_file(write(tmp_path, "a.md", MD), "recursive")
+    data = json.loads(pipe.cfg.bm25_path.read_text())
+    data.pop("tokenizer")                                              # looks like a file from the old tokenizer
+    data["tokens"] = [["what", "does"] for _ in data["tokens"]]        # ...with stale content
+    pipe.cfg.bm25_path.write_text(json.dumps(data))
+    pipe2 = Pipeline(pipe.cfg, embedder=HashEmbedder())                # opening rebuilds from Chroma
+    assert pipe2.index.is_in_sync() and pipe2.index.search_bm25("kittens yarn", 3)
+
+
+def test_score_margin_cuts_the_irrelevant_tail(retr):
+    class Fixed:
+        def score(self, query, texts):
+            return [5.0, 4.0, -3.0, -9.0, -10.0, -11.0, -12.0, -13.0, -14.0, -15.0][:len(texts)]
+    retr._reranker = Fixed()
+    full = retr.retrieve("database indexes transactions", mode="hybrid", rerank=True)
+    cut = retr.retrieve("database indexes transactions", mode="hybrid", rerank=True, score_margin=5)
+    assert len(full.results) >= 3 and len(cut.results) == 2            # keeps 5.0 and 4.0 only
+    assert len(retr.retrieve("database indexes", mode="hybrid", rerank=False, score_margin=5).results) \
+        == len(retr.retrieve("database indexes", mode="hybrid", rerank=False).results)   # margin needs a reranker
