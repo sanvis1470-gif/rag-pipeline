@@ -18,8 +18,20 @@ from .models import Chunk
 _BATCH = 500
 
 
-def tokenize(text: str) -> list[str]:
-    return re.findall(r"\w+", text.lower())
+TOKENIZER_VERSION = 2      # bump when tokenize() changes: the stored BM25 index is then rebuilt from Chroma
+
+# Very common English words carry no signal for keyword search ("what does a 404 ... mean" would
+# otherwise match nearly every chunk on "what", "does", "a"). Kept deliberately conservative.
+STOPWORDS = frozenset("""a about above after again all also am an and any are as at be because been before being
+below between both but by can could did do does doing down during each few for from further had has have having he
+her here hers him his how i if in into is it its itself just me more most my no nor not of off on once only or other
+our out over own same she should so some such than that the their them then there these they this those through to
+too under until up very was we were what when where which while who whom why will with would you your""".split())
+
+
+def tokenize(text: str, keep_stopwords: bool = False) -> list[str]:
+    toks = re.findall(r"\w+", text.lower())
+    return toks if keep_stopwords else [t for t in toks if t not in STOPWORDS]
 
 
 class BM25Index:
@@ -30,12 +42,14 @@ class BM25Index:
         self._model: BM25Okapi | None = None
         if self.path.exists():
             d = json.loads(self.path.read_text())
-            self.ids, self.tokens = d["ids"], d["tokens"]
+            if d.get("tokenizer") == TOKENIZER_VERSION:
+                self.ids, self.tokens = d["ids"], d["tokens"]
+            # else: stale tokens from an older tokenizer -> start empty; ChunkIndex.repair() rebuilds from Chroma
 
     def _save(self) -> None:
         self._model = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({"ids": self.ids, "tokens": self.tokens}))
+        self.path.write_text(json.dumps({"tokenizer": TOKENIZER_VERSION, "ids": self.ids, "tokens": self.tokens}))
 
     def add(self, ids: list[str], texts: list[str]) -> None:
         self.ids += ids
@@ -58,7 +72,8 @@ class BM25Index:
             return []
         if self._model is None:
             self._model = BM25Okapi(self.tokens)
-        scores = self._model.get_scores(tokenize(query))
+        q = tokenize(query) or tokenize(query, keep_stopwords=True)     # query made only of stopwords: keep them
+        scores = self._model.get_scores(q)
         top = np.argsort(scores)[::-1][:k]
         return [(self.ids[i], float(scores[i])) for i in top if scores[i] > 0]
 
