@@ -3,6 +3,7 @@ from pathlib import Path
 
 STRATEGIES = ("fixed", "recursive", "semantic")
 DEFAULT_MODELS = {"local": "BAAI/bge-small-en-v1.5", "openai": "text-embedding-3-small"}
+DEFAULT_LLM_MODELS = {"ollama": "llama3.2:3b", "openai": "gpt-4o-mini", "custom": None}
 
 
 @dataclass
@@ -31,6 +32,19 @@ class Config:
     rerank_margin: float | None = None   # if set, drop results scoring more than this below the best one
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+    # generation + citations (phase 3)
+    llm_provider: str = "ollama"         # ollama (local, free) | openai | custom (any OpenAI-compatible endpoint)
+    llm_model: str | None = None         # None -> provider default
+    llm_base_url: str | None = None      # required for "custom"; optional override for the others
+    llm_temperature: float = 0.0
+    llm_max_tokens: int = 700
+    answer_score_margin: float | None = 5.0     # context = chunks within this many reranker points of the best
+    min_retrieval_confidence: float = 0.25      # below this the system declines to answer
+    verify_citations: bool = True
+    check_completeness: bool = True
+    rescue_miscited: bool = True         # when a cited block doesn't support a claim, look for one that does
+    confidence_weights: tuple = (0.4, 0.4, 0.2)  # retrieval, citation coverage, completeness
+
     # dedup / embedding
     dedup_threshold: float = 0.95        # cosine similarity
     embed_batch_size: int = 128
@@ -43,6 +57,12 @@ class Config:
             self.embedding_model = DEFAULT_MODELS[self.embedding_provider]
         if self.strategy not in STRATEGIES:
             raise ValueError(f"strategy must be one of {STRATEGIES}")
+        if self.llm_provider not in DEFAULT_LLM_MODELS:
+            raise ValueError(f"llm_provider must be one of {tuple(DEFAULT_LLM_MODELS)}")
+        if self.llm_model is None:
+            self.llm_model = DEFAULT_LLM_MODELS[self.llm_provider]
+        if len(self.confidence_weights) != 3 or min(self.confidence_weights) < 0 or sum(self.confidence_weights) <= 0:
+            raise ValueError("confidence_weights must be 3 non-negative numbers that do not all equal 0")
         if min(self.dense_weight, self.sparse_weight) < 0 or self.dense_weight + self.sparse_weight <= 0:
             raise ValueError("dense_weight and sparse_weight must be >= 0 and not both 0")
         if self.chunk_overlap >= self.chunk_size:

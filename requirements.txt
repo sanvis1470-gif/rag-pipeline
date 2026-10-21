@@ -1,5 +1,5 @@
 sentence-transformers>=3.0   # local embeddings (default)
-openai>=1.40                 # only needed with --provider openai
+openai>=1.40                 # client for the answer LLM (Ollama, OpenAI or any compatible endpoint) and optional OpenAI embeddings
 chromadb>=0.5
 rank-bm25>=0.2.2
 pypdf>=4.0
