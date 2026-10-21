@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .answering import Answerer
 from .chunkers import make_chunker
 from .config import Config
 from .dedup import find_duplicates
 from .embeddings import Embedder, make_embedder
 from .indexes import ChunkIndex
+from .llm import LLM
 from .loaders import load_document
 from .models import Chunk, Document
 from .rerankers import Reranker
@@ -29,7 +31,7 @@ class IngestReport:
 
 class Pipeline:
     def __init__(self, cfg: Config | None = None, embedder: Embedder | None = None, auto_repair: bool = True,
-                 reranker: Reranker | None = None):
+                 reranker: Reranker | None = None, llm: LLM | None = None):
         self.cfg = cfg or Config()
         self.cfg.data_dir.mkdir(parents=True, exist_ok=True)
         self._check_embedding_model()
@@ -37,6 +39,7 @@ class Pipeline:
         self.store = DocumentStore(self.cfg.raw_dir, self.cfg.processed_dir)
         self.index = ChunkIndex(self.cfg.chroma_dir, self.cfg.bm25_path, self.cfg.collection_name, auto_repair)
         self.retriever = Retriever(self.index, self.embedder, self.cfg, reranker)
+        self.answerer = Answerer(self.retriever, llm, self.cfg)     # the LLM itself is created on first use
 
     def _check_embedding_model(self) -> None:
         """Vectors from different models can't share an index -> refuse to mix them."""
