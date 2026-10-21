@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 out.txt
 semantic.txt
+*.exe
