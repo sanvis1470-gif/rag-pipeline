@@ -32,6 +32,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--data-dir", default="data")
     ap.add_argument("--provider", choices=["local", "openai"], default="local")
     ap.add_argument("--model", default=None, help="embedding model name (default depends on provider)")
+    ap.add_argument("--llm-provider", choices=["ollama", "openai", "custom"], default=None,
+                    help="LLM that writes and checks answers (default: ollama, local and free)")
+    ap.add_argument("--llm-model", default=None, help="e.g. llama3.2:3b (default depends on provider)")
+    ap.add_argument("--llm-base-url", default=None, help="OpenAI-compatible endpoint (needed for --llm-provider custom)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("ingest", help="load, chunk, embed and index files/folders")
@@ -67,6 +71,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--sweep", action="store_true", help="also sweep the dense/sparse weight ratio")
     p.add_argument("--margin", type=float, default=5.0, help="score margin used by the rerank+cutoff stage")
 
+    p = sub.add_parser("ask", help="answer a question from your documents, with verified [n] citations")
+    p.add_argument("question")
+    p.add_argument("--no-verify", action="store_true", help="skip the citation judge (faster, no coverage score)")
+    p.add_argument("--no-completeness", action="store_true", help="skip the completeness check")
+    p.add_argument("--min-confidence", type=float, default=None, help="decline below this retrieval confidence (default 0.25)")
+    p.add_argument("--json", action="store_true", help="print the structured response as JSON")
+    p.add_argument("--show-context", action="store_true", help="always list the retrieved sources")
+
+    p = sub.add_parser("evaluate-answers", help="check answers, citations and refusals on answerable + unanswerable questions")
+    p.add_argument("--questions", default="eval_answers.json")
+    p.add_argument("--verbose", action="store_true", help="list every claim that was not verified, with the judge's reason")
+
     p = sub.add_parser("compare", help="run eval questions against several chunking strategies")
     p.add_argument("--questions", default="eval_questions.json")
     p.add_argument("--strategies", nargs="+", choices=STRATEGIES, default=list(STRATEGIES))
@@ -81,6 +97,9 @@ def main(argv: list[str] | None = None) -> None:
     if dw is not None or sw is not None:                 # give one and the other defaults to the remainder
         extra["dense_weight"] = dw if dw is not None else 1 - sw
         extra["sparse_weight"] = sw if sw is not None else 1 - dw
+    for attr in ("llm_provider", "llm_model", "llm_base_url"):
+        if getattr(a, attr, None) is not None:
+            extra[attr] = getattr(a, attr)
     cfg = Config(data_dir=a.data_dir, **extra, embedding_provider=a.provider, embedding_model=a.model,
                  strategy=getattr(a, "strategy", "recursive"),
                  chunk_size=getattr(a, "chunk_size", 1000),
@@ -126,6 +145,26 @@ def main(argv: list[str] | None = None) -> None:
         print(format_eval(run_eval(pipe.retriever, questions, a.top_n, margin=a.margin), questions, a.top_n))
         if a.sweep:
             print("\n" + format_sweep(sweep_weights(pipe.retriever, questions, a.top_n), len(questions), a.top_n))
+    elif a.cmd == "ask":
+        import json
+        from .answering import format_answer
+        from .llm import LLMError
+        try:
+            ans = pipe.answerer.ask(a.question, verify=False if a.no_verify else None,
+                                    check_completeness=False if a.no_completeness else None,
+                                    min_confidence=a.min_confidence)
+        except LLMError as e:
+            raise SystemExit(f"\nLLM error: {e}")
+        print(json.dumps(ans.to_dict(), indent=2, ensure_ascii=False) if a.json else "\n" + format_answer(ans, a.show_context))
+    elif a.cmd == "evaluate-answers":
+        import json
+        from .answer_eval import format_answer_eval, run_answer_eval
+        from .llm import LLMError
+        questions = json.loads(Path(a.questions).read_text(encoding="utf-8"))
+        try:
+            print(format_answer_eval(run_answer_eval(pipe.answerer, questions), a.verbose))
+        except LLMError as e:
+            raise SystemExit(f"\nLLM error: {e}")
     elif a.cmd == "compare":
         import json
         from .compare import format_report, run_comparison

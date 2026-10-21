@@ -1,0 +1,16 @@
+[
+  {"answerable": true,  "question": "what does a 404 status code mean", "expected_keywords": ["requested page", "could not find", "not found"]},
+  {"answerable": true,  "question": "what is a B-tree index and why is it used", "expected_keywords": ["sorted", "lookup", "default"]},
+  {"answerable": true,  "question": "what does ACID stand for in database transactions", "expected_keywords": ["atomicity"]},
+  {"answerable": true,  "question": "how does HTTPS keep traffic encrypted", "expected_keywords": ["tls"]},
+  {"answerable": true,  "question": "what is the difference between a list and a tuple in Python", "expected_keywords": ["cannot be changed", "changeable"]},
+  {"answerable": true,  "question": "which free resources teach system design", "expected_keywords": ["gaurav", "bytebyte", "primer"]},
+  {"answerable": true,  "question": "how do I make sure a file is closed in Python even if an error occurs", "expected_keywords": ["with"]},
+  {"answerable": true,  "question": "what is normalization in databases and what does it cost", "expected_keywords": ["duplicat", "joins"]},
+  {"answerable": false, "question": "how do I set up PostgreSQL streaming replication"},
+  {"answerable": false, "question": "what is the TCP three-way handshake"},
+  {"answerable": false, "question": "what is the capital of France"},
+  {"answerable": false, "question": "how do I deploy a Docker container to Kubernetes"},
+  {"answerable": false, "question": "who won the 2022 football world cup"},
+  {"answerable": false, "question": "what is the refund policy"}
+]
