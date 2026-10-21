@@ -40,6 +40,7 @@ class RetrievalResult:
     results: list[RetrievedChunk]      # final top-n, best first
     reranked: bool = False
     weights: tuple[float, float] = field(default=(1.0, 0.0))
+    score_kind: str | None = None      # "logit" or "unit": how to read rerank_score (None = not reranked)
 
 
 def reciprocal_rank_fusion(dense: list[dict], sparse: list[dict], dense_weight: float = 0.7,
@@ -112,8 +113,10 @@ class Retriever:
                     c.sparse_rank, c.sparse_score = rank, h["score"]
                 candidates.append(c)
 
+        score_kind = None
         if rerank and candidates:
             scores = self.reranker.score(query, [c.text for c in candidates])
+            score_kind = getattr(self.reranker, "score_kind", "logit")
             for c, s in zip(candidates, scores):
                 c.rerank_score = float(s)
             results = sorted(candidates, key=lambda c: -c.rerank_score)[:top_n]   # stable: ties keep fusion order
@@ -123,4 +126,4 @@ class Retriever:
         else:
             results = candidates[:top_n]
         return RetrievalResult(query, mode, candidates, results, bool(rerank and candidates),
-                               (dw, sw) if mode == "hybrid" else (1.0, 0.0))
+                               (dw, sw) if mode == "hybrid" else (1.0, 0.0), score_kind)

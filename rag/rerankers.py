@@ -13,6 +13,7 @@ class Reranker(Protocol):
 
 class CrossEncoderReranker:
     """Small local cross-encoder (default: ms-marco MiniLM, ~90 MB). No API key, runs on CPU."""
+    score_kind = "logit"        # raw scores, roughly -11 (irrelevant) to +5 (answers the question)
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", batch_size: int = 16):
         from sentence_transformers import CrossEncoder      # downloads the model on first use
@@ -29,6 +30,7 @@ class CrossEncoderReranker:
 
 class LexicalOverlapReranker:
     """Offline stand-in for tests: fraction of query words that appear in the chunk."""
+    score_kind = "unit"         # already between 0 and 1
 
     def score(self, query: str, texts: list[str]) -> list[float]:
         q = set(re.findall(r"\w+", query.lower()))
