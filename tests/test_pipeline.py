@@ -301,3 +301,313 @@ def test_score_margin_cuts_the_irrelevant_tail(retr):
     assert len(full.results) >= 3 and len(cut.results) == 2            # keeps 5.0 and 4.0 only
     assert len(retr.retrieve("database indexes", mode="hybrid", rerank=False, score_margin=5).results) \
         == len(retr.retrieve("database indexes", mode="hybrid", rerank=False).results)   # margin needs a reranker
+
+
+# ------------------------------------------------------------------ phase 3: grounded answers
+def scripted_llm(gen, verdict=lambda claim, source: "supported", parts=None):
+    from rag.llm import FakeLLM
+
+    def handler(system, user, json_mode):
+        if "fact-checker" in system:
+            claim = user.split("CLAIM:\n", 1)[1].split("\n\nSOURCE:", 1)[0]
+            source = user.split("SOURCE:\n", 1)[1]
+            return json.dumps({"verdict": verdict(claim, source), "reason": "scripted"})
+        if "distinct parts" in system:
+            return json.dumps({"parts": parts or [{"part": "the question", "addressed": True}]})
+        return gen
+    return FakeLLM(handler)
+
+
+def test_parse_claims_handles_citation_styles():
+    from rag.answering import parse_claims
+    ans = ("Cats purr when they are happy [1]. They sleep most of the day [1][2]. Kittens chase mice. [3]\n"
+           "- Indexes speed up queries [2, 3].\n"
+           "An uncited statement about databases.\n"
+           "Not found in the context: pricing details.")
+    claims, missing = parse_claims(ans)
+    assert [c.citations for c in claims] == [[1], [1, 2], [3], [2, 3], []]
+    assert claims[0].text == "Cats purr when they are happy."
+    assert claims[2].text == "Kittens chase mice."                   # citation written after the full stop
+    assert missing == ["Not found in the context: pricing details."]
+
+
+def test_lenient_json_parsing():
+    from rag.llm import parse_json
+    assert parse_json('{"a": 1}') == {"a": 1}
+    assert parse_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse_json('Sure! Here is the result: {"verdict": "supported"} Hope that helps') == {"verdict": "supported"}
+    assert parse_json("no json here") is None and parse_json("[1, 2]") is None
+
+
+def test_build_context_is_numbered_with_provenance():
+    from rag.answering import Source, build_context
+    ctx = build_context([Source(1, "a", "x.pdf", "Intro", 3, 0.9, "alpha text"), Source(2, "b", "y.md", "", -1, 0.5, "beta")])
+    assert ctx.startswith("[1] (x.pdf, page 3, section: Intro)\nalpha text") and "\n\n[2] (y.md)\nbeta" in ctx
+
+
+def test_confidence_math():
+    from rag.confidence import citation_coverage, composite_score, label_for, retrieval_confidence, score_to_prob
+    assert score_to_prob(0, "logit") == 0.5 and score_to_prob(-11, "logit") < 0.001 and score_to_prob(0.7, "unit") == 0.7
+    assert retrieval_confidence([4.6], "logit") > 0.98                         # one strong chunk is enough
+    assert retrieval_confidence([4.6, -10, -10], "logit") < retrieval_confidence([4.6], "logit")   # weak padding costs
+    assert retrieval_confidence([], "logit") == 0.0
+    assert citation_coverage(["verified", "partial", "unsupported", "uncited"]) == 0.375 and citation_coverage([]) is None
+    w = (0.4, 0.4, 0.2)
+    assert abs(composite_score(1.0, 0.5, 0.0, w) - 0.6) < 1e-9
+    assert abs(composite_score(0.8, None, 1.0, w) - (0.8 * 0.4 + 1.0 * 0.2) / 0.6) < 1e-9   # missing part renormalized
+    assert [label_for(x) for x in (0.9, 0.6, 0.2)] == ["high", "medium", "low"]
+
+
+def test_answer_with_verified_citations(retr, pipe):
+    from rag.answering import Answerer
+    llm = scripted_llm("Cats purr when they are happy [1]. Kittens play with yarn [1].")
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy")
+    assert ans.status == "answered" and [c.status for c in ans.claims] == ["verified", "verified"]
+    assert ans.confidence.coverage == 1.0 and ans.confidence.completeness == 1.0 and ans.confidence.label == "high"
+    assert ans.flagged_answer == ans.answer and ans.sources[0].n == 1 and not ans.notes
+    assert "cats" in ans.sources[0].text.lower()
+
+
+def test_unsupported_and_invalid_citations_are_flagged(retr, pipe):
+    from rag.answering import Answerer, format_answer
+    llm = scripted_llm("Cats purr when happy [1]. Cats can fly [1]. Dogs bark loudly [9].",
+                       verdict=lambda claim, source: "not_supported" if "fly" in claim else "supported")
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy")
+    # "Dogs bark loudly [9]": block 9 does not exist, but the scripted judge finds support in a real block -> miscited
+    assert [c.status for c in ans.claims] == ["verified", "unsupported", "miscited"]
+    assert ans.claims[2].verdicts == {9: "invalid"} and ans.claims[2].supported_by
+    assert "[1?]" in ans.flagged_answer and "[9?]" in ans.flagged_answer
+    assert abs(ans.confidence.coverage - 0.5) < 1e-9 and ans.notes
+    assert "UNSUPPORTED" in format_answer(ans)
+
+
+def test_partial_and_uncited_claims_lower_coverage(retr, pipe):
+    from rag.answering import Answerer
+    llm = scripted_llm("Cats purr [1]. Cats have fur.", verdict=lambda c, s: "partially_supported")
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy")
+    assert [c.status for c in ans.claims] == ["partial", "uncited"] and ans.confidence.coverage == 0.25
+    assert "[1~]" in ans.flagged_answer
+
+
+def test_declines_without_calling_llm_when_retrieval_is_weak(retr, pipe):
+    from rag.answering import NO_ANSWER_TEXT, Answerer, format_answer
+    llm = scripted_llm("this must never be used")
+    ans = Answerer(retr, llm, pipe.cfg).ask("zebra quantum spaceship")
+    assert ans.status == "insufficient_evidence" and ans.answer == NO_ANSWER_TEXT
+    assert llm.calls == []                                           # no LLM call, nothing to hallucinate with
+    assert ans.suggested_documents and ans.suggested_documents[0]["source"] == "a.md"
+    assert ans.found and "zebra quantum spaceship" in ans.not_found and ans.confidence.retrieval < 0.25
+    text = format_answer(ans)
+    assert "What was found:" in text and "What was not found:" in text and "Documents worth checking manually:" in text
+    assert ans.to_dict()["status"] == "insufficient_evidence"
+
+
+def test_model_declared_insufficient_context(retr, pipe):
+    from rag.answering import Answerer
+    llm = scripted_llm("INSUFFICIENT CONTEXT: The documents do not mention a cats' diet.")
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy")
+    assert ans.status == "insufficient_evidence" and "diet" in ans.not_found
+    assert [c[2] for c in llm.calls] == [False]                      # generated once, never reached the judge
+
+
+def test_partial_answer_reports_missing_part(retr, pipe):
+    from rag.answering import Answerer
+    llm = scripted_llm("Cats purr when happy [1]. Not found in the context: how long they sleep.",
+                       parts=[{"part": "do cats purr", "addressed": True}, {"part": "how long they sleep", "addressed": False}])
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy and how long do they sleep")   # a genuinely two-part question
+    assert ans.status == "answered" and ans.missing_info == ["Not found in the context: how long they sleep."]
+    assert ans.confidence.completeness == 0.5 and ans.confidence.missing_parts == ["how long they sleep"]
+
+
+def test_unusable_judge_output_is_marked_unchecked_not_unsupported(retr, pipe):
+    from rag.answering import Answerer
+    from rag.llm import FakeLLM
+    llm = FakeLLM(lambda s, u, j: "Cats purr when happy [1]." if "ONLY" in s else "I think so, probably!")
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy")
+    assert ans.claims[0].status == "unchecked" and ans.confidence.completeness is None
+
+
+def test_verification_can_be_switched_off(retr, pipe):
+    from rag.answering import Answerer
+    llm = scripted_llm("Cats purr when happy [1].")
+    ans = Answerer(retr, llm, pipe.cfg).ask("do cats purr when happy", verify=False, check_completeness=False)
+    assert ans.confidence.coverage is None and ans.confidence.completeness is None
+    assert len(llm.calls) == 1 and abs(ans.confidence.composite - ans.confidence.retrieval) < 1e-9
+
+
+def test_answer_eval_reports_refusals_and_hallucination_risk(retr, pipe):
+    from rag.answer_eval import format_answer_eval, run_answer_eval
+    from rag.answering import Answerer
+    qs = [{"question": "do cats purr when happy", "answerable": True, "expected_keywords": ["purr"]},
+          {"question": "zebra quantum spaceship", "answerable": False}]
+    rows = run_answer_eval(Answerer(retr, scripted_llm("Cats purr when happy [1]."), pipe.cfg), qs)
+    assert [r["correct"] for r in rows] == [True, True]
+    report = format_answer_eval(rows)
+    assert "1/1" in report and "unanswerable questions correctly declined: 1/1" in report
+
+
+def test_config_validates_llm_settings():
+    with pytest.raises(ValueError):
+        Config(llm_provider="nope")
+    with pytest.raises(ValueError):
+        Config(confidence_weights=(0, 0, 0))
+    assert Config().llm_model == "llama3.2:3b" and Config(llm_provider="openai").llm_model == "gpt-4o-mini"
+
+
+def _judge(**reply):
+    from rag.llm import FakeLLM
+    return FakeLLM(lambda system, user, json_mode: json.dumps(reply))
+
+
+def _check(llm, claim, source, question="what does a 404 status code mean"):
+    from rag.answering import Claim, Source, verify_claims
+    src = Source(1, "id", "f.html", "h", -1, 0.9, source)
+    return verify_claims(llm, [Claim(claim, [1], claim)], {1: src}, question)[0]
+
+
+SRC = "200 means the request succeeded. 404 means the server could not find the requested page. 500 means something went wrong."
+
+
+def test_valid_evidence_quote_overrules_a_wrong_not_supported_verdict():
+    chk = _check(_judge(evidence="404 means the server could not find the requested page.", verdict="not_supported",
+                        reason="not explicitly stated"), "The 404 status code means the server could not find the requested page.", SRC)
+    assert chk.status == "verified" and "overridden" in chk.reasons[1]
+
+
+def test_negation_mismatch_is_not_overruled():
+    chk = _check(_judge(evidence="404 means the server could not find the requested page.", verdict="not_supported",
+                        reason="contradiction"), "The 404 status code means the server can find the requested page.", SRC)
+    assert chk.status == "unsupported"
+
+
+def test_number_mismatch_is_not_overruled():
+    chk = _check(_judge(evidence="404 means the server could not find the requested page.", verdict="not_supported",
+                        reason="wrong code"), "A 403 status code means the server could not find the requested page.", SRC)
+    assert chk.status == "unsupported"
+
+
+def test_supported_verdict_needs_a_real_quote():
+    chk = _check(_judge(evidence="404 means the moon is made of cheese.", verdict="supported", reason="yes"),
+                 "The 404 status code means the moon is made of cheese.", SRC)
+    assert chk.status == "partial" and "not in the source" in chk.reasons[1]
+    ok = _check(_judge(verdict="supported", reason="yes"), "The 404 status code means the server could not find the page.", SRC)
+    assert ok.status == "verified"                                        # no evidence field at all: judge trusted as before
+
+
+def test_completeness_ignores_citation_markers_and_bogus_parts(retr, pipe):
+    from rag.answering import Answerer
+    seen = []
+
+    def handler(system, user, json_mode):
+        if "fact-checker" in system:
+            return json.dumps({"verdict": "supported", "reason": "ok"})
+        if "distinct parts" in system:
+            seen.append(user)
+            return json.dumps({"parts": [{"part": "do cats purr", "addressed": True}, {"part": "[1]", "addressed": False}]})
+        return "Cats purr when happy [1]."
+    from rag.llm import FakeLLM
+    ans = Answerer(retr, FakeLLM(handler), pipe.cfg).ask("do cats purr when happy")
+    assert "[1]" not in seen[0].split("ANSWER:")[1]                       # citation markers stripped before judging
+    assert ans.confidence.completeness == 1.0 and ans.confidence.missing_parts == []
+
+
+def test_single_part_question_collapses_judge_noise():
+    from rag.confidence import completeness_score, is_single_part
+    from rag.llm import FakeLLM
+    assert is_single_part("what does a 404 status code mean") and is_single_part("which free resources teach system design")
+    assert not is_single_part("what is a B-tree index and why is it used") and not is_single_part("what is X, and what is Y")
+    noisy = json.dumps({"parts": [{"part": "what does a 404 status code mean", "addressed": False},
+                                  {"part": "the 404 code", "addressed": True}]})
+    assert completeness_score(FakeLLM(lambda s, u, j: noisy), "what does a 404 status code mean", "It means not found.") == (1.0, [])
+    none = json.dumps({"parts": [{"part": "what does a 404 status code mean", "addressed": False}]})
+    assert completeness_score(FakeLLM(lambda s, u, j: none), "what does a 404 status code mean", "I like cats.") \
+        == (0.0, ["what does a 404 status code mean"])
+    multi = json.dumps({"parts": [{"part": "what is a B-tree", "addressed": True}, {"part": "why is it used", "addressed": False}]})
+    assert completeness_score(FakeLLM(lambda s, u, j: multi), "what is a B-tree index and why is it used", "A B-tree is sorted.") \
+        == (0.5, ["why is it used"])                                   # genuinely multi-part questions keep their parts
+
+
+def test_verbose_answer_eval_lists_unverified_claims(retr, pipe):
+    from rag.answer_eval import format_answer_eval, run_answer_eval
+    from rag.answering import Answerer
+    llm = scripted_llm("Cats purr when happy [1]. Cats can fly [1].",
+                       verdict=lambda claim, source: "not_supported" if "fly" in claim else "supported")
+    rows = run_answer_eval(Answerer(retr, llm, pipe.cfg), [{"question": "do cats purr when happy", "answerable": True,
+                                                              "expected_keywords": ["purr"]}])
+    assert rows[0]["weak"][0]["status"] == "unsupported" and rows[0]["weak"][0]["claim"] == "Cats can fly."
+    report = format_answer_eval(rows, verbose=True)
+    assert "Claims that were not verified" in report and "[UNSUPPORTED] Cats can fly." in report
+    assert "Claims that were not verified" not in format_answer_eval(rows)
+
+
+def _keyword_judge():
+    """Scripted judge: a block supports a claim if the block contains the claim's first word."""
+    from rag.llm import FakeLLM
+
+    def handler(system, user, json_mode):
+        claim = user.split("CLAIM:\n", 1)[1].split("\n\nSOURCE:", 1)[0]
+        source = user.split("SOURCE:\n", 1)[1]
+        ok = claim.split()[0].lower() in source.lower()
+        return json.dumps({"verdict": "supported" if ok else "not_supported", "reason": "scripted"})
+    return FakeLLM(handler)
+
+
+def _two_blocks():
+    from rag.answering import Source
+    return {1: Source(1, "a", "x.md", "A", -1, 0.9, "Alpha facts live here."),
+            2: Source(2, "b", "y.md", "B", -1, 0.8, "Beta facts live here.")}
+
+
+def test_wrong_citation_number_is_detected_and_corrected():
+    from rag.answering import Claim, verify_claims
+    from rag.confidence import citation_coverage
+    claims = [Claim("Alpha is described", [2], "Alpha is described [2]."),      # real support is block 1
+              Claim("Alpha again", [3], "Alpha again [3]."),                      # block 3 does not exist
+              Claim("Beta is described", [2], "Beta is described [2].")]         # correctly cited
+    checks = verify_claims(_keyword_judge(), claims, _two_blocks())
+    assert [c.status for c in checks] == ["miscited", "miscited", "verified"]
+    assert checks[0].supported_by == [1] and checks[1].verdicts == {3: "invalid"} and checks[1].supported_by == [1]
+    assert citation_coverage([c.status for c in checks]) == (0.5 + 0.5 + 1.0) / 3
+
+
+def test_miscited_rescue_can_be_disabled_and_never_rescues_nonsense():
+    from rag.answering import Claim, verify_claims
+    off = verify_claims(_keyword_judge(), [Claim("Alpha is described", [2], "x")], _two_blocks(), rescue=False)
+    assert off[0].status == "unsupported" and off[0].supported_by == []
+    nonsense = verify_claims(_keyword_judge(), [Claim("Zebra facts", [2], "x")], _two_blocks())
+    assert nonsense[0].status == "unsupported"                              # no block supports it, so it stays flagged
+
+
+def test_list_lead_ins_are_not_claims_but_list_items_are():
+    from rag.answering import parse_claims
+    claims, missing = parse_claims("The free resources are:\n- ByteByteGo videos [1]\n- System Design Primer [2]")
+    assert [(c.text, c.citations) for c in claims] == [("ByteByteGo videos", [1]), ("System Design Primer", [2])]
+
+
+def test_multi_sentence_evidence_can_overrule_for_a_combined_claim():
+    src = ("Transactions are described by the ACID properties. Atomicity means all or nothing. "
+           "Consistency means valid states. Isolation means no interference. Durability means it survives a crash.")
+    ev = "Atomicity means all or nothing. Consistency means valid states. Isolation means no interference. Durability means it survives a crash."
+    chk = _check(_judge(evidence=ev, verdict="not_supported", reason="only atomicity defined"),
+                 "ACID stands for Atomicity, Consistency, Isolation, and Durability.", src,
+                 question="what does ACID stand for in database transactions")
+    assert chk.status == "verified"
+
+
+def test_possessive_and_fragment_claims_match_their_quote():
+    src = "ByteByteGo (YouTube) short visual explainers per concept. Gaurav Sen best free beginner-friendly system design series."
+    chk = _check(_judge(evidence="ByteByteGo (YouTube) short visual explainers per concept.", verdict="not_supported", reason="fragment"),
+                 "ByteByteGo's YouTube explainers", src, question="which free resources teach system design")
+    assert chk.status == "verified"
+
+
+def test_other_block_that_only_partly_supports_gives_partial_not_unsupported():
+    from rag.answering import Claim, verify_claims
+    from rag.llm import FakeLLM
+
+    def handler(system, user, json_mode):
+        source = user.split("SOURCE:\n", 1)[1]
+        verdict = "partially_supported" if "Alpha" in source else "not_supported"
+        return json.dumps({"verdict": verdict, "reason": "scripted"})
+    chk = verify_claims(FakeLLM(handler), [Claim("Alpha is large and fast", [2], "x")], _two_blocks())[0]
+    assert chk.status == "partial" and chk.supported_by == [1]
