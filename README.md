@@ -2,21 +2,24 @@
 
 Retrieval for question answering over your own documents (RAG: retrieval-augmented generation). It ingests Markdown, text, HTML and PDF files, splits them with three switchable chunking strategies, and finds answers with **hybrid search**: embedding search plus BM25 keyword search, merged with Reciprocal Rank Fusion and re-scored by a cross-encoder. Answers are generated only from the retrieved chunks, every `[n]` citation is checked by an LLM judge, each answer gets a confidence score, and when the documents don't contain the answer the system says so instead of guessing. Everything can run locally with no paid API key, and every stage is measured on labelled questions.
 
-## Results
+## Retrieval results
 
-14 labelled questions (6 exact-identifier, 5 paraphrased, 3 mixed) over 26 chunks, recursive chunking, local models. A hit means the chunk contains the whole answer phrase; MRR is 1.00 when the right chunk is always first.
+14 labelled questions (6 exact-identifier, 5 paraphrased, 3 mixed) over 26 chunks, recursive chunking, local models, top 5 returned. A hit means the chunk contains the whole answer phrase; MRR is 1.00 when the right chunk is always first.
 
-| stage | hit@1 | hit@5 | MRR |
-|---|---|---|---|
-| dense (embeddings) only | 10/14 | 13/14 | 0.79 |
-| BM25 only | 11/14 | 13/14 | 0.86 |
-| hybrid (RRF 0.7 / 0.3) | 11/14 | 14/14 | 0.89 |
-| hybrid + cross-encoder rerank | 13/14 | 14/14 | 0.96 |
+| stage | hit@1 | hit@5 | MRR | chunks returned (avg) |
+|---|---|---|---|---|
+| dense (embeddings) only | 10/14 | 13/14 | 0.79 | 5.0 |
+| BM25 only | 11/14 | 13/14 | 0.85 | 2.7 |
+| hybrid (RRF 0.7 / 0.3) | 11/14 | 14/14 | 0.89 | 5.0 |
+| hybrid + cross-encoder rerank | 13/14 | 14/14 | 0.96 | 5.0 |
+| hybrid + rerank + score cutoff (margin 5) | 13/14 | 14/14 | 0.96 | 1.1 |
 
 - On exact-identifier questions dense search had MRR 0.70 against 1.00 for BM25 (it missed `idx_students_email` entirely). Hybrid found the right chunk in the top 5 for every question.
-- The reranker lifted paraphrased-question MRR from 0.70 to 0.90.
-- A dense/sparse weight sweep slightly favoured 0.5 / 0.5, but that is a one-question difference. With the reranker on, weights barely matter because it sees the whole 20-candidate pool either way.
-- Measured before the stopword and score-cutoff changes below. Caveats: small question set written after reading the documents, tiny corpus, no unanswerable questions yet.
+- The reranker lifted paraphrased-question MRR from 0.70 (hybrid) to 0.90.
+- The score cutoff cut the chunks returned from 5.0 to 1.1 on average with no loss of accuracy on this set, so far less context goes to the language model. It has not been tested on questions that need several chunks.
+- BM25 stopword filtering made sparse search return 2.7 chunks on average instead of padding with matches on common words. Hybrid and reranked accuracy did not change; BM25 alone moved from MRR 0.86 to 0.85 (one paraphrased question, rank 2 to rank 3).
+- A dense/sparse weight sweep favoured 0.5 / 0.5 in two runs (MRR 0.93 vs 0.89 for 0.7 / 0.3), a one-question difference. With the reranker on, weights barely matter because it sees the whole 20-candidate pool either way.
+- Caveats: a small question set written after reading the documents, and a tiny corpus. Unanswerable questions are covered in the Phase 3 evaluation below.
 
 Chunking comparison (`python -m rag compare`, 10 questions): fixed, recursive and semantic all found the answer in the top 3 for every question. Recursive was chosen as the default (same top accuracy, real section boundaries, no extra embedding cost).
 
